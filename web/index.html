@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en" data-theme="light"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SpeedACLScan</title>
+<link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+<header>
+  <div class="logo" onclick="go('projects')">Speed<span>ACLScan</span><small>masked AD attack-path analysis</small></div>
+  <nav id="nav">
+    <button data-view="projects" class="active" onclick="go('projects')">Projects</button>
+    <button data-view="new" onclick="go('new')">New Project</button>
+    <button data-view="config" onclick="go('config')">Config</button>
+    <button data-view="logs" onclick="go('logs')">Logs</button>
+  </nav>
+  <div class="hd-right">
+    <button class="theme" id="themeBtn" onclick="toggleTheme()" title="Toggle theme" aria-label="theme"></button>
+  </div>
+</header>
+
+<main>
+<!-- ============ PROJECTS LIST ============ -->
+<section id="view-projects" class="view active">
+  <div class="crumb"><h1>Projects</h1><button class="btn" onclick="go('new')">+ New Project</button></div>
+  <div id="projList" class="proj-list"></div>
+  <div id="projEmpty" class="empty hidden">
+    <div class="empty-card"><h2>No projects yet</h2><p>Create a project to start an engagement.</p>
+      <button class="btn big" onclick="go('new')">+ New Project</button></div>
+  </div>
+</section>
+
+<!-- ============ NEW PROJECT ============ -->
+<section id="view-new" class="view">
+  <h1>New project</h1>
+  <div class="card">
+    <label>Project name (engagement)</label>
+    <div class="inline">
+      <input type="text" id="npName" class="search" placeholder="ACME Internal" onkeydown="if(event.key==='Enter')createAndEnter()">
+      <button class="btn" onclick="createAndEnter()">Create &amp; open</button>
+    </div>
+    <p class="muted sm" id="npStat">A project holds its own collection, pwned list, findings and masking map.</p>
+  </div>
+</section>
+
+<!-- ============ PROJECT WORKSPACE ============ -->
+<section id="view-project" class="view">
+  <div class="crumb">
+    <button class="btn sec sm" onclick="go('projects')">← Projects</button>
+    <h1 id="pTitle">—</h1>
+    <span class="chip" id="pStatus"></span>
+    <div class="steps" id="pSteps"></div>
+  </div>
+
+  <!-- 1. collect -->
+  <div class="card">
+    <div class="card-h"><h3>1 · Collect BloodHound data</h3>
+      <span class="muted sm" id="dataStat"></span>
+      <button class="btn sec sm" id="collectToggle" onclick="toggleCollect()">Collect</button></div>
+    <div id="collectBody" class="hidden">
+      <div class="options">
+        <div class="option" id="optScan" onclick="pickOption('scan')">
+          <div class="opt-ico">◎</div><h3>New BloodHound scan</h3><p>Collect with NetExec against a live DC.</p></div>
+        <div class="option" id="optImport" onclick="pickOption('import')">
+          <div class="opt-ico">▣</div><h3>Import collection zip</h3><p>Load an existing SharpHound / BloodHound export.</p></div>
+      </div>
+      <div class="sub hidden" id="scanForm">
+        <div class="grid3">
+          <div><label>nxc path</label><input type="text" id="nxPath" placeholder="nxc"></div>
+          <div><label>DC IP</label><input type="text" id="scDc" placeholder="10.0.0.1"></div>
+          <div><label>DC FQDN</label><input type="text" id="scFqdn" placeholder="dc01.example.local"></div>
+          <div><label>Domain</label><input type="text" id="scDomain" placeholder="example.local"></div>
+          <div><label>DNS server (blank = DC IP)</label><input type="text" id="scDns" placeholder="10.0.0.1"></div>
+          <div><label>Extra nxc args</label><input type="text" id="scExtra" placeholder="--kdcHost dc01.example.local"></div>
+          <div><label>Username</label><input type="text" id="scUser" placeholder="svc_account"></div>
+          <div><label>Password</label><input type="password" id="scPass"></div>
+        </div>
+        <div class="run-row"><button class="btn" id="scanBtn" onclick="startScan()">Start collection</button>
+          <span class="muted sm">creds go to the nxc subprocess only</span></div>
+        <div class="progress hidden" id="scProgress"><div class="bar" id="scBar"></div><span class="pct" id="scPct">0%</span></div>
+        <div class="feed hidden" id="scFeed"></div>
+      </div>
+      <div class="sub hidden" id="importForm">
+        <div class="drop" id="drop" onclick="document.getElementById('zipFile').click()">
+          <input type="file" id="zipFile" accept=".zip" hidden onchange="uploadZip(this.files[0])">
+          <span id="dropText">Click to choose a BloodHound .zip</span></div>
+        <div class="progress hidden" id="imProgress"><div class="bar" id="imBar"></div><span class="pct" id="imPct">0%</span></div>
+        <div class="feed hidden" id="imFeed"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. pwned + analysis -->
+  <div class="card" id="controlCard">
+    <div class="card-h"><h3>2 · Compromised principals &amp; analysis</h3></div>
+    <div id="noData" class="hidden note">No collection yet — use <a onclick="toggleCollect(true)">Collect</a> above.</div>
+    <div id="haveData">
+      <input type="text" id="pwSearch" class="search" placeholder="search user / group / computer / machine account…" oninput="debouncedSearch()">
+      <div class="results" id="pwResults"></div>
+      <div class="pwned-row"><span class="muted sm" id="pwCount"></span><div class="chips" id="pwnedChips"></div></div>
+
+      <div class="scope">
+        <div class="scope-h"><b>Scan scope</b><span class="muted sm">chosen before analysis — broadens what gets found</span></div>
+        <div class="scope-opts">
+          <label class="toggle"><input type="checkbox" id="scEnum" onchange="saveScope()"><span>Enumerate all paths (k-shortest)</span></label>
+          <label class="toggle"><input type="checkbox" id="scStand" onchange="saveScope()"><span>Report standalone dangerous ACEs</span></label>
+          <label class="toggle"><input type="checkbox" id="scBroad" onchange="saveScope()"><span>Broaden targets (adminCount / DCs / CAs)</span></label>
+          <label class="toggle"><input type="checkbox" id="scAdcs" onchange="saveScope()"><span>Detect AD CS (ESC) exposure</span></label>
+        </div>
+        <label style="margin-top:10px">Extra targets (Tier-0) — type a principal and Enter</label>
+        <input type="text" id="tgtInput" class="search" placeholder="svc_sqladmin  /  TIER0 GROUP  /  SID…"
+               onkeydown="if(event.key==='Enter'){addTarget(this.value);this.value='';}">
+        <div class="chips" id="tgtChips" style="margin-top:8px"></div>
+      </div>
+
+      <div class="run-row">
+        <button class="btn" id="analyzeBtn" onclick="startAnalyze()">Run analysis</button>
+        <label class="toggle"><input type="checkbox" id="useAi" checked><span>use AI (OpenCode)</span></label>
+        <span class="muted sm" id="runHint"></span>
+      </div>
+      <div class="progress hidden" id="anProgress"><div class="bar" id="anBar"></div><span class="pct" id="anPct">0%</span></div>
+      <div class="feed hidden" id="anFeed"></div>
+    </div>
+  </div>
+
+  <!-- 3. results -->
+  <div id="resultsWrap" class="hidden">
+    <div class="kpis" id="kpis"></div>
+    <div id="adcsLine" class="adcsline muted sm hidden"></div>
+    <div class="results-stack">
+      <div class="graph-pane">
+        <div class="card-h"><h3 id="graphTitle">Attack graph — all paths</h3><span class="muted sm">drag · wheel/±  zoom · hover to focus</span></div>
+        <div class="graphbox">
+          <svg id="graph" viewBox="0 0 1400 600" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="zoomctl"><button onclick="zoomBy(1.25)">+</button><button onclick="zoomBy(0.8)">−</button><button onclick="zoomReset()" title="reset">⟲</button></div>
+        </div>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="findings-pane">
+        <div class="card-h"><h3>Vulnerabilities</h3><button class="pill" id="allBtn" onclick="selectFinding(-1)">All paths</button>
+          <a class="btn sec sm" id="dlHtml" target="_blank" style="margin-left:auto">Open full report</a><a class="btn sec sm" id="dlMd" download>Download .md</a></div>
+        <div id="findingList"></div>
+      </div>
+    </div>
+    <div class="card hidden" id="standaloneWrap">
+      <div class="card-h"><h3>Standalone dangerous ACEs</h3><span class="muted sm">misconfigs that are risks even without a full path to Domain Admin</span></div>
+      <div id="saTable"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CONFIG ============ -->
+<section id="view-config" class="view">
+  <h1>Config</h1>
+  <div class="card">
+    <h3>OpenCode (AI backend)</h3>
+    <div class="grid3">
+      <div><label>Server URL</label><input type="text" id="ocUrl" placeholder="http://127.0.0.1:4096"></div>
+      <div><label>Model</label><select class="full" id="ocModel"><option value="">(server default)</option></select></div>
+      <div><label>Server password</label><input type="password" id="ocPass"></div>
+    </div>
+    <div class="run-row"><button class="btn sec" onclick="testOpenCode()">Test &amp; load models</button><span class="muted sm" id="ocStat"></span></div>
+  </div>
+  <div class="card">
+    <h3>Analysis options</h3>
+    <div class="grid3">
+      <div><label>Max AI iterations</label><input type="text" id="optIter" placeholder="12"></div>
+      <div><label>Parallelism</label><input type="text" id="optPar" placeholder="1"></div>
+    </div>
+  </div>
+  <button class="btn" onclick="saveConfig()">Save config</button><span class="msg" id="cfgMsg"></span>
+</section>
+
+<!-- ============ LOGS ============ -->
+<section id="view-logs" class="view">
+  <h1>Logs <span class="muted sm">— OpenCode session: what went, came, and how it was reversed</span></h1>
+  <div id="logsNoProj" class="note hidden">Open a project first (Projects → pick one).</div>
+  <div class="card" id="logsCard">
+    <div class="card-h">
+      <span class="muted sm"><b class="dir-sent">sent</b> masked→AI · <b class="dir-received">received</b> AI reply (masked) · <b class="dir-reverse">reverse</b> unmasked locally · <b class="dir-status">status</b></span>
+      <button class="btn sec sm" onclick="loadLogs()">Refresh</button>
+    </div>
+    <table><thead><tr><th>Time</th><th>Dir</th><th>Note</th><th>Content</th></tr></thead><tbody id="logBody"></tbody></table>
+  </div>
+</section>
+</main>
+
+<!-- confirm modal -->
+<div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()">
+  <div class="modal-box">
+    <h3 id="modalTitle">Confirm</h3>
+    <p id="modalMsg" class="muted"></p>
+    <div class="modal-actions">
+      <button class="btn sec" onclick="closeModal()">Cancel</button>
+      <button class="btn danger" id="modalOk">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script src="/web/app.js"></script>
+</body></html>
